@@ -1,8 +1,9 @@
-/* include/threads.h */
 #ifndef THREADS_H
 #define THREADS_H
 
 #include <pthread.h>
+#include <signal.h>
+
 #include "utils.h"
 
 typedef struct {
@@ -10,6 +11,8 @@ typedef struct {
     dialog_t *dialog;
     int dialog_id;
     int my_slot;
+    int shm_id;
+    volatile sig_atomic_t *terminate_flag;
 } thread_args_t;
 
 void* reader_thread(void* arg);
