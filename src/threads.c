@@ -1,9 +1,13 @@
+/* threads.c */
+
 #include <stdio.h>
 #include <string.h>
 #include "../include/threads.h"
 #include "../include/utils.h"
 
 #include <poll.h>
+
+#define ERROR_LIMIT_REACHED 5
 
 static void trim_newline(char *s) {
     if (!s) return;
@@ -48,7 +52,7 @@ int message_send(dialog_t *dialog, int my_slot, const char *text) {
     }
     if (index == -1) {
         fprintf(stderr, "Dialog %d reached message limit.\n", dialog->dialog_id);
-        return LIMIT_REACHED;                                    // mailbox full
+        return ERROR_LIMIT_REACHED;                              // mailbox full
     }
 
     message_t *m = &dialog->messages[index];
@@ -92,21 +96,21 @@ int message_receive(dialog_t *dialog, int my_slot) {
 }
 
 void* reader_thread(void *arg) {
-    thread_args_t *a = (thread_args_t*)arg;
+    thread_args_t *input = (thread_args_t*)arg;
 
     sem_wait(mutex);
-    message_receive(a->dialog, a->my_slot);                      // print any messages that existed before this reader started
+    message_receive(input->dialog, input->my_slot);              // print any messages that existed before this reader started
     sem_post(mutex);
 
     while (1) {
-        sem_wait(&a->dialog->slot_sem[a->my_slot]);              // sleep until someone posts that this slot has new activity
+        sem_wait(&input->dialog->slot_sem[input->my_slot]);      // sleep until someone posts that this slot has new activity
 
         sem_wait(mutex);                                         // protect shared memory while scanning/marking messages
-        int got = message_receive(a->dialog, a->my_slot);
+        int got = message_receive(input->dialog, input->my_slot);
         sem_post(mutex);
 
         if (got == -1) {                                         // saw TERMINATE
-            *a->terminate_flag = 1;                              // tell writer thread to stop as well
+            *input->terminate_flag = 1;                          // tell writer thread to stop as well
             break;
         }
     }
@@ -115,18 +119,34 @@ void* reader_thread(void *arg) {
 }
 
 void* writer_thread(void *arg) {
-    thread_args_t *a = (thread_args_t*)arg;
+    thread_args_t *input = (thread_args_t*) arg;
     char buf[MAX_MSG_SIZE];
 
     while (1) {
-        if (*a->terminate_flag) break;                           // termination requested by reader or self
+        if (*input->terminate_flag) break;                        // termination requested by reader or self
 
-        struct pollfd pfd;
-        pfd.fd = STDIN_FILENO;
-        pfd.events = POLLIN;
+        /*  pollfd is used to perform a non-blocking check for user input on stdin.
 
-        int pr = poll(&pfd, 1, 200);                             // timeout keeps the loop responsive to terminate_flag
-        if (pr <= 0) continue;
+            Instead of calling fgets() directly (which would block indefinitely),
+            poll() waits until either:
+            - input becomes available on STDIN, or
+            - the timeout expires.
+
+            This allows the thread to periodically wake up and check terminate_flag,
+            making termination responsive even if the user does not type anything.
+        */
+
+        struct pollfd stdin_poll;
+        stdin_poll.fd = STDIN_FILENO;                             // monitor standard input
+        stdin_poll.events = POLLIN;                               // interested only in "data available for reading"
+
+        /*  poll waits up to 200 ms for input to become available on stdin.
+            If no input arrives, it returns 0 and the loop continues.
+            This timeout-based approach prevents permanent blocking and
+            allows cooperative termination.
+        */
+        int poll_result = poll(&stdin_poll, 1, 200);
+        if (poll_result <= 0) continue;
 
         if (fgets(buf, sizeof(buf), stdin) == NULL) break;       // EOF / input closed
         trim_newline(buf);
@@ -135,20 +155,24 @@ void* writer_thread(void *arg) {
 
         sem_wait(mutex);
 
-        int rc = message_send(a->dialog, a->my_slot, buf);
+        int send_status = message_send(input->dialog, input->my_slot, buf);
 
-        if (rc == 0) {
+        if (send_status == 0) {
             for (int s = 0; s < MAX_DIALOG_PARTICIPANTS; s++) {
-                if (a->dialog->slot_used[s]) {
-                    sem_post(&a->dialog->slot_sem[s]);           // wake all active participants to check for new messages
+                if (input->dialog->slot_used[s]) {
+                    sem_post(&input->dialog->slot_sem[s]);           // wake all active participants to check for new messages
                 }
             }
+        }
+        else {
+            fprintf(stderr, "Dialog is full. No more messages can be sent.\n");
+            exit(ERROR_LIMIT_REACHED);
         }
 
         sem_post(mutex);
 
-        if (strcmp(buf, "TERMINATE") == 0) {
-            *a->terminate_flag = 1;                              // stop this writer; reader will also exit when it sees it
+        if (strncmp(buf, "TERMINATE", 9) == 0) {
+            *input->terminate_flag = 1;                              // stop this writer; reader will also exit when it sees it
             break;
         }
     }

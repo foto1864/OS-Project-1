@@ -1,33 +1,45 @@
+/* utils.c */
+
 #include "../include/utils.h"
 
 sem_t *mutex = NULL;
 
+/*  Error Messages that might help in debugging.
+    These errors are implementation specific so they should not be placed in
+    utils.h but rather here in utils.c
+*/
+#define ERROR_ARGS_NO 1
+#define ERROR_EMPTY_ARG 2
+#define ERROR_NOT_INT 3
+#define ERROR_NOT_IN_RANGE 4
+#define ERROR_LIMIT_REACHED 5
+
 int check_argument_validity(int argc, char* argv[]) {
     if (argc != 2) {                                             // require exactly one argument: the dialog ID
         fprintf(stderr, "Usage: ./dialog <dialog_ID>\n");
-        exit(1);
+        exit(ERROR_ARGS_NO);
     }
     if (argv[1][0] == '\0') {                                    // reject empty string early
         fprintf(stderr, "Error: Empty <dialog_ID>.\n");
-        exit(2);
+        exit(ERROR_NOT_INT);
     }
     size_t n = strlen(argv[1]);
     for (size_t i = 0; i < n; i++) {
         if (argv[1][i] < '0' || argv[1][i] > '9') {              // enforce numeric-only input (no signs, no spaces)
             fprintf(stderr, "Error: <dialog_ID> must be an integer in [0,%d]\n", MAX_DIALOGS - 1);
-            exit(2);
+            exit(ERROR_NOT_INT);
         }
     }
     int dialog_id = atoi(argv[1]);                               // safe after digit-only validation
     if (dialog_id < 0 || dialog_id >= MAX_DIALOGS) {             // keep ID within array bounds
         fprintf(stderr, "Error: <dialog_ID> must be in [0,%d]\n", MAX_DIALOGS - 1);
-        exit(3);
+        exit(ERROR_NOT_IN_RANGE);
     }
     return dialog_id;
 }
 
 shared_memory_t* create_and_attach_shared_mem(int *out_shm_id) {
-    key_t mem_key = 612004;                                      // fixed key so all processes attach to the same segment
+    key_t mem_key = 612004;                                      // (my bday) - fixed key so all processes attach to the same segment
 
     int shm_id = shmget(mem_key, sizeof(shared_memory_t), IPC_CREAT | 0666);
     if (shm_id == -1) {
@@ -61,7 +73,7 @@ void init_shared_memory(shared_memory_t *shared_mem) {
 
         dialog->sem_initialized = 1;                             // mark semaphores as usable for cleanup logic
         for (int s = 0; s < MAX_DIALOG_PARTICIPANTS; s++) {
-            if (sem_init(&dialog->slot_sem[s], 1, 0) != 0) {      // pshared=1 => usable across processes, initial value 0
+            if (sem_init(&dialog->slot_sem[s], 1, 0) != 0) {     // pshared=1 => usable across processes, initial value 0
                 perror("sem_init");
                 exit(errno);
             }
@@ -93,7 +105,7 @@ int join_dialog(dialog_t *dialog, pid_t pid) {
         }
     }
     fprintf(stderr, "Dialog %d is full.\n", dialog->dialog_id);
-    exit(4);
+    exit(ERROR_LIMIT_REACHED);
 }
 
 void leave_dialog(shared_memory_t *shared_mem, dialog_t *dialog, int my_slot) {

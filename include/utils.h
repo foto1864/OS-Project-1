@@ -1,10 +1,10 @@
-#ifndef UTILS_H
-#define UTILS_H
-
 /*  utils.h
     The utils.h file contains declaration of structs and function prototypes
     along with the inclusion of many libraries that are used in the project.
 */ 
+
+#ifndef UTILS_H
+#define UTILS_H
 
 #include <errno.h>
 #include <fcntl.h>
@@ -27,8 +27,6 @@
 #define MAX_MSGS_PER_DIALOG 512
 #define MAX_DIALOG_PARTICIPANTS 16
 #define MAX_DIALOGS 32
-
-#define LIMIT_REACHED 10
 
 /*  A general comment is that we have avoided the use of booleans inside the code as ints are easier to work with.
     Since our memory is not limited to the point that we need to optimize 1 byte instead of 4, we have gone with int.
