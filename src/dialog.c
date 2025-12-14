@@ -2,8 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../include/threads.h"
-#include "../include/utils.h"
+#include "../include/dialog.h"
 
 int main(int argc, char *argv[]) {
 
